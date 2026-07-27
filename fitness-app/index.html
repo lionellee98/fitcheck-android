@@ -42,7 +42,18 @@
               <button data-v="outdoor">🌳 室外体育场</button>
             </div>
           </div>
+          <div class="field">
+            <label>训练部位</label>
+            <div class="seg" id="partsModeSeg">
+              <button data-v="ai" class="active">✨ AI 智能推荐</button>
+              <button data-v="manual">✋ 自选部位</button>
+            </div>
+            <div id="partsChips" class="chips parts-chips"></div>
+            <div id="partsHint" class="parts-hint"></div>
+          </div>
           <button id="genPlanBtn" class="primary-btn">生成今日计划</button>
+        </div>
+        <div id="planPreview"></div>
         </div>
         <div id="planResult"></div>
       </section>

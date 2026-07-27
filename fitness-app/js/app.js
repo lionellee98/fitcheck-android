@@ -74,7 +74,25 @@
   $$('[data-close]').forEach(b => b.addEventListener('click', () => closeModal(b.dataset.close)));
 
   /* ================= 每日计划 ================= */
-  let planCfg = { duration: 'ai', custom: '', env: 'gym' };
+  let planCfg = { duration: 'ai', custom: '', env: 'gym', partsMode: 'ai', parts: [] };
+  let pendingPlan = null;       // 实时预览中的计划（尚未提交）
+  let pendingMeta = null;
+
+  const PARTS = ['胸部', '背部', '肩部', '手臂', '腿部', '核心/腰腹', '有氧', '颈部'];
+  const SCENE = {
+    gym: { ic: '🏋️', t: '健身房模式', s: '器械全部开放 · 自由重量 + 固定器械' },
+    home: { ic: '🏠', t: '居家模式', s: '仅哑铃 + 垫上徒手 · 无需任何器械' },
+    outdoor: { ic: '🌳', t: '户外模式', s: '徒手 + 单杠 / 双杠 · 轻装出门' },
+  };
+  function isTodayCompleted() { const r = Store.getDay(Store.todayStr()); return !!(r && r.completed); }
+  function computeDuration() {
+    return planCfg.duration === 'ai' ? AI.suggestDuration(Store.getProfile())
+      : (parseInt(planCfg.custom) || parseInt(planCfg.duration) || 30);
+  }
+  function currentRegions() {
+    if (planCfg.partsMode !== 'manual') return null;     // AI 推荐
+    return planCfg.parts.length ? planCfg.parts : null; // 自选但未选 → 退回 AI
+  }
 
   function renderPlan() {
     const today = Store.todayStr();
@@ -86,11 +104,16 @@
         <div class="h-sub">消耗约 ${rec.calories} kcal · ${rec.plan.length} 个动作 · ${envLabel(rec.env)}</div>`;
       currentPlan = rec.plan.map(p => Object.assign({}, p));
       currentPlan._meta = { durationMin: rec.durationMin, env: rec.env };
+      $('#planPreview').innerHTML = '';
+      renderPartsChips();
     } else {
-      const dur = planCfg.duration === 'ai' ? AI.suggestDuration(Store.getProfile()) : (parseInt(planCfg.custom) || parseInt(planCfg.duration) || 30);
+      const dur = computeDuration();
       hero.innerHTML = `<div class="h-label">今日尚未打卡</div>
         <div class="h-main">${dur} 分钟训练</div>
-        <div class="h-sub">选好条件，生成你的专属计划</div>`;
+        <div class="h-sub">选好条件，下方实时预览今日动作</div>`;
+      currentPlan = null;
+      renderPartsChips();
+      renderPlanPreview();
     }
     renderPlanResult();
   }
@@ -118,32 +141,91 @@
     $('#startWorkout').addEventListener('click', startWorkout);
   }
 
+  // 部位选择 chips（仅手动模式显示）
+  function renderPartsChips() {
+    const box = $('#partsChips');
+    const hint = $('#partsHint');
+    if (planCfg.partsMode !== 'manual') { box.innerHTML = ''; hint.textContent = 'AI 将根据你的打卡进度与身体重点，智能搭配训练部位。'; return; }
+    box.innerHTML = PARTS.map(r => `<div class="chip ${planCfg.parts.includes(r) ? 'active' : ''}" data-r="${r}">${r}</div>`).join('');
+    hint.textContent = planCfg.parts.length ? '已选 ' + planCfg.parts.length + ' 个部位，下方实时更新动作' : '请选择至少一个目标肌群';
+    $$('#partsChips .chip').forEach(c => c.addEventListener('click', () => {
+      const set = new Set(planCfg.parts);
+      set.has(c.dataset.r) ? set.delete(c.dataset.r) : set.add(c.dataset.r);
+      planCfg.parts = Array.from(set);
+      renderPartsChips();
+      if (!isTodayCompleted()) { currentPlan = null; renderPlanPreview(); }
+    }));
+  }
+
+  // 实时预览：随环境 / 时长 / 部位即时刷新动作列表
+  function renderPlanPreview() {
+    const box = $('#planPreview');
+    if (currentPlan) { box.innerHTML = ''; return; } // 已提交计划时隐藏预览
+    if (planCfg.partsMode === 'manual' && !planCfg.parts.length) { box.innerHTML = ''; return; }
+    const profile = Store.getProfile() || {};
+    const dur = computeDuration();
+    const env = planCfg.env;
+    const regions = currentRegions();
+    const plan = AI.generatePlan({ durationMin: dur, env, profile, completedDays: Store.countDays(), concernRegions: profile.concernAreas || [], regions });
+    pendingPlan = plan; pendingMeta = { durationMin: dur, env };
+    const badge = SCENE[env];
+    const head = `<div class="scene-badge scene-${env}">
+        <span class="sb-ic">${badge.ic}</span>
+        <div class="sb-text"><div class="sb-t">${badge.t}</div><div class="sb-s">${badge.s}</div></div>
+      </div>`;
+    const items = plan.map((p, i) => `
+      <div class="plan-item" data-id="${p.id}">
+        <div class="ord">${i + 1}</div>
+        <img loading="lazy" src="${gifUrl(p.gif)}" alt="${p.zh || p.name}" onerror="this.style.visibility='hidden'">
+        <div class="pi-info">
+          <div class="pi-name">${p.zh || p.name}</div>
+          <div class="pi-meta">${p.region} · ${p.equipment}</div>
+        </div>
+        <div class="pi-reps">${p.sets === 1 ? p.reps : p.sets + ' 组 × ' + p.reps}</div>
+      </div>`).join('');
+    box.innerHTML = head +
+      `<div class="card-title preview-title">今日训练动作预览 · 共 ${plan.length} 个</div>` + items;
+    $$('#planPreview .plan-item').forEach(el => el.addEventListener('click', () => {
+      const ex = AI.byId(el.dataset.id); if (ex) showExercise(ex);
+    }));
+  }
+
   $('#durationSeg').addEventListener('click', e => {
     if (e.target.tagName !== 'BUTTON') return;
     $$('#durationSeg button').forEach(b => b.classList.toggle('active', b === e.target));
     planCfg.duration = e.target.dataset.v;
     if (planCfg.duration !== 'ai') $('#durationCustom').value = '';
+    if (!isTodayCompleted()) { currentPlan = null; renderPlanPreview(); }
   });
   $('#durationCustom').addEventListener('input', e => {
     planCfg.custom = e.target.value;
     if (e.target.value) {
       $$('#durationSeg button').forEach(b => b.classList.remove('active'));
+      if (!isTodayCompleted()) { currentPlan = null; renderPlanPreview(); }
     }
   });
   $('#envSeg').addEventListener('click', e => {
     if (e.target.tagName !== 'BUTTON') return;
     $$('#envSeg button').forEach(b => b.classList.toggle('active', b === e.target));
     planCfg.env = e.target.dataset.v;
+    if (!isTodayCompleted()) { currentPlan = null; renderPlanPreview(); }
+  });
+  $('#partsModeSeg').addEventListener('click', e => {
+    if (e.target.tagName !== 'BUTTON') return;
+    $$('#partsModeSeg button').forEach(b => b.classList.toggle('active', b === e.target));
+    planCfg.partsMode = e.target.dataset.v;
+    renderPartsChips();
+    if (!isTodayCompleted()) { currentPlan = null; renderPlanPreview(); }
   });
   $('#genPlanBtn').addEventListener('click', () => {
+    if (planCfg.partsMode === 'manual' && !planCfg.parts.length) { toast('请先选择训练部位，或切到 AI 推荐'); return; }
     const profile = Store.getProfile() || {};
-    let dur = planCfg.duration === 'ai' ? AI.suggestDuration(profile) : (parseInt(planCfg.custom) || parseInt(planCfg.duration) || 30);
-    if (dur < 10) dur = 10;
+    const dur = computeDuration();
     const env = planCfg.env;
-    const completedDays = Store.countDays();
-    const concern = profile.concernAreas || [];
-    currentPlan = AI.generatePlan({ durationMin: dur, env, profile, completedDays, concernRegions: concern });
+    const regions = currentRegions();
+    currentPlan = AI.generatePlan({ durationMin: dur, env, profile, completedDays: Store.countDays(), concernRegions: profile.concernAreas || [], regions });
     currentPlan._meta = { durationMin: dur, env };
+    $('#planPreview').innerHTML = '';   // 提交后隐藏实时预览，展示已锁定计划
     toast('已生成 ' + currentPlan.length + ' 个动作的今日计划');
     renderPlanResult();
   });

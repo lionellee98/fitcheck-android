@@ -7,13 +7,20 @@ const AI = (function () {
   function byId(id) { return DATA.find(e => e.id === id); }
   function byRegion(region) { return DATA.filter(e => e.region === region); }
 
+  // 场景严格白名单：动作匹配按环境区分
+  // 健身房：全部器械开放
+  // 居家：仅哑铃 + 徒手/垫上（不含任何健身房器械）
+  // 户外：仅徒手 + 单杠/双杠（数据集统一标记为 body weight，不含哑铃与器械）
+  const ENV_EQUIPMENT = {
+    gym: null,
+    home: ['dumbbell', 'body weight'],
+    outdoor: ['body weight'],
+  };
   function equipmentAllowed(equipment, env) {
-    if (env === 'gym') return true;
-    const homeExclude = ['leverage machine', 'smith machine'];
-    const outdoorExclude = ['leverage machine', 'smith machine', 'barbell', 'cable', 'olympic barbell'];
-    if (env === 'home') return !homeExclude.includes(equipment);
-    if (env === 'outdoor') return !outdoorExclude.includes(equipment);
-    return true;
+    const allow = ENV_EQUIPMENT[env];
+    if (!allow) return true; // gym: 全部允许
+    const eq = (equipment || '').trim().toLowerCase();
+    return allow.includes(eq);
   }
 
   function suggestDuration(profile) {
@@ -60,25 +67,39 @@ const AI = (function () {
   }
 
   function generatePlan(opts) {
-    const { durationMin, env, profile, completedDays, concernRegions } = opts;
-    const regions = pickSplit(completedDays || 0, concernRegions);
+    const { durationMin, env, profile, completedDays, concernRegions, regions: explicit } = opts;
+    // 自选部位优先；否则由 AI 根据打卡进度与身体重点智能搭配
+    const regions = (explicit && explicit.length) ? explicit : pickSplit(completedDays || 0, concernRegions);
     const scheme = repsScheme(profile && profile.goal);
-    const perMin = Math.max(6, Math.round(durationMin / (regions.length * 2 + 1)));
+    const dur = Math.max(10, durationMin || 30);
+
+    // 统计主训练动作数量，用于把总时长合理分配到每个动作
+    let mainCount = 0;
+    regions.forEach(rg => {
+      const pool = byRegion(rg).filter(e => equipmentAllowed(e.equipment, env));
+      if (pool.length) mainCount += (rg === '腿部' || rg === '背部') ? 2 : 1;
+    });
+    const mainSecs = mainCount ? Math.round(dur * 60 * 0.72 / mainCount) : 50;
+
     let plan = [];
 
-    const wu = DATA.find(e => e.region === '有氧' && equipmentAllowed(e.equipment, env))
+    // 热身：居家/户外优先徒手有氧，健身房可用任意有氧器械
+    const wu = (env === 'gym'
+      ? DATA.find(e => e.region === '有氧')
+      : DATA.find(e => e.region === '有氧' && e.equipment === 'body weight'))
       || DATA.find(e => e.equipment === 'body weight');
-    if (wu) plan.push(makeItem(wu, 1, '动态热身', env, 180, 'warmup'));
+    if (wu) plan.push(makeItem(wu, 1, '动态热身', env, Math.min(240, Math.round(dur * 7.2) || 180), 'warmup'));
 
     regions.forEach(rg => {
       const pool = shuffle(byRegion(rg).filter(e => equipmentAllowed(e.equipment, env)));
       if (!pool.length) return;
       const n = (rg === '腿部' || rg === '背部') ? 2 : 1;
-      pool.slice(0, n).forEach(ex => plan.push(makeItem(ex, scheme.sets, scheme.reps, env, perMin * 60, 'main')));
+      pool.slice(0, n).forEach(ex => plan.push(makeItem(ex, scheme.sets, scheme.reps, env, mainSecs, 'main')));
     });
 
+    // 放松：徒手拉伸（任意场景均适用）
     const cd = DATA.find(e => e.region === '核心/腰腹' && e.equipment === 'body weight')
-      || DATA.find(e => e.region === '有氧');
+      || DATA.find(e => e.equipment === 'body weight' && e.region !== '有氧');
     if (cd && !plan.find(p => p.id === cd.id)) plan.push(makeItem(cd, 1, '拉伸放松', env, 180, 'cooldown'));
 
     return plan;
