@@ -35,10 +35,20 @@ jobs:
           sdkmanager "platforms;android-35" "build-tools;35.0.0"
           echo "ANDROID_HOME=$ANDROID_HOME"
 
+      - name: Set app version in source (before sync)
+        run: python3 .github/scripts/patch_index_version.py
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+
       - name: Install deps & sync Capacitor
         run: |
           npm ci || npm install
           npx cap sync android
+
+      - name: Inject signing config & bump version in build.gradle
+        run: python3 .github/scripts/patch_gradle.py
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
 
       - name: Build debug APK
         working-directory: android

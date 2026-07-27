@@ -475,6 +475,8 @@
     const p = Store.getProfile() || {};
     $('#inpWeight').value = p.weight || '';
     $('#inpHeight').value = p.height || '';
+    const v = document.querySelector('meta[name="app-version"]');
+    if (v && $('#appVersion')) $('#appVersion').textContent = '版本 v' + (v.content || '1.0');
     renderBodyAnalysis();
     renderPhotos();
     renderConcern();
