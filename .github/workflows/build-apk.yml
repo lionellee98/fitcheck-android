@@ -5,6 +5,9 @@ on:
   push:
     branches: [main, master]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -50,3 +53,29 @@ jobs:
         with:
           name: fitness-checkin-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Publish to fixed "latest" release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: latest
+        run: |
+          API="https://api.github.com/repos/$REPO"
+          # 删除已存在的 latest release 与 tag（保证永远指向最新构建）
+          REL_ID=$(curl -s -H "Authorization: token $GITHUB_TOKEN" "$API/releases/tags/$TAG" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
+          if [ -n "$REL_ID" ]; then
+            curl -s -X DELETE -H "Authorization: token $GITHUB_TOKEN" "$API/releases/$REL_ID" > /dev/null
+          fi
+          curl -s -X DELETE -H "Authorization: token $GITHUB_TOKEN" "$API/git/refs/tags/$TAG" > /dev/null || true
+          # 创建新的 latest release
+          BODY="自动构建的最新版 APK (commit ${GITHUB_SHA:0:7})"
+          REL=$(curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" -H "Content-Type: application/json" \
+            -d "{\"tag\":\"$TAG\",\"name\":\"latest\",\"body\":\"$BODY\",\"prerelease\":false}" "$API/releases")
+          UPLOAD=$(echo "$REL" | grep -o '"upload_url":"[^"]*' | head -1 | sed 's/"upload_url":"//' | sed 's/{?name,label}//')
+          # 上传 APK 作为资产
+          curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Content-Type: application/vnd.android.package-archive" \
+            --data-binary @android/app/build/outputs/apk/debug/app-debug.apk \
+            "$UPLOAD?name=app-debug.apk"
+          echo "Published latest release: https://github.com/$REPO/releases/latest"
+
