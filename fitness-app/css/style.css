@@ -291,6 +291,18 @@ body {
 /* Workout */
 .wo-modal { text-align: center; }
 .wo-phase { font-size: 13px; color: var(--accent); font-weight: 800; letter-spacing: 1px; margin-bottom: 10px; }
+.wo-media-wrap {
+  position: relative; width: 100%; max-width: 280px; margin: 0 auto 12px;
+  border-radius: 18px; overflow: hidden; aspect-ratio: 4 / 3;
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+.wo-media { width: 100%; height: 100%; object-fit: cover; display: block; }
+.wo-media[src=""] { visibility: hidden; }
+.wo-set-info {
+  position: absolute; left: 10px; bottom: 10px;
+  background: rgba(0,0,0,0.55); color: #fff; backdrop-filter: blur(6px);
+  font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px;
+}
 .wo-timer-wrap { position: relative; width: 200px; height: 200px; margin: 0 auto 14px; }
 .wo-ring { width: 200px; height: 200px; transform: rotate(-90deg); }
 .wo-ring-bg { fill: none; stroke: var(--surface-2); stroke-width: 8; }

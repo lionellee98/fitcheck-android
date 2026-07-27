@@ -72,6 +72,8 @@
   }
   $('#quoteClose').addEventListener('click', () => closeModal('quoteModal'));
   $$('[data-close]').forEach(b => b.addEventListener('click', () => closeModal(b.dataset.close)));
+  // 关闭跟练弹窗时停止计时，避免后台定时器继续走导致再次打开无法暂停
+  document.querySelector('[data-close="workoutModal"]').addEventListener('click', stopTimer);
 
   /* ================= 每日计划 ================= */
   let planCfg = { duration: 'ai', custom: '', env: 'gym', partsMode: 'ai', parts: [] };
@@ -244,10 +246,18 @@
     if (!currentPlan || !currentPlan.length) { toast('请先生成今日计划'); return; }
     const old = $('#workoutModal .wo-summary'); if (old) old.remove();
     const plan = currentPlan;
+    stopTimer();                // 防止上一次会话遗留的定时器继续走
     wo = { i: 0, j: 1, phase: 'work', remaining: plan[0].secs, total: plan[0].secs,
       running: false, timer: null, plan, meta: currentPlan._meta || { durationMin: 30, env: 'gym' } };
     updateWorkoutUI();
     openModal('workoutModal');
+  }
+  function startTimer() {
+    stopTimer();                // 永远只保留一个活动定时器
+    if (wo) wo.timer = setInterval(woTick, 1000);
+  }
+  function stopTimer() {
+    if (wo && wo.timer) { clearInterval(wo.timer); wo.timer = null; }
   }
   function curItem() { return wo.plan[wo.i]; }
   function setPhase(phase, secs) {
@@ -277,6 +287,20 @@
     if (!item) return;
     const phaseLabel = wo.phase === 'warmup' ? '热身' : wo.phase === 'cooldown' ? '放松' : wo.phase === 'rest' ? '休息' : '训练';
     $('#woPhase').textContent = phaseLabel + ' · 第 ' + (wo.i + 1) + '/' + wo.plan.length + ' 个动作';
+    // 当前动作演示图（按动作匹配）
+    const media = $('#woMedia');
+    if (media) {
+      const src = gifUrl(item.gif);
+      if (media.getAttribute('src') !== src) media.setAttribute('src', src);
+      media.onerror = () => { media.style.visibility = 'hidden'; };
+      media.style.visibility = 'visible';
+    }
+    const setInfo = $('#woSetInfo');
+    if (setInfo) {
+      if (wo.phase === 'work') setInfo.textContent = '第 ' + wo.j + '/' + item.sets + ' 组 · ' + item.reps;
+      else if (wo.phase === 'rest') setInfo.textContent = '组间休息 · 下一组 ' + (wo.j + 1) + '/' + item.sets;
+      else setInfo.textContent = item.region + ' · ' + item.equipment;
+    }
     $('#woExercise').textContent = item.zh || item.name;
     $('#woCoach').textContent = COACH[wo.phase] || '';
     $('#woTime').textContent = fmtTime(Math.max(0, wo.remaining));
@@ -286,14 +310,14 @@
     $('#woToggle').textContent = wo.running ? '暂停' : '开始';
   }
   $('#woToggle').addEventListener('click', () => {
+    if (!wo) return;
     wo.running = !wo.running;
-    $('#woToggle').textContent = wo.running ? '暂停' : '开始';
-    if (wo.running) wo.timer = setInterval(woTick, 1000);
-    else clearInterval(wo.timer);
+    if (wo.running) startTimer(); else stopTimer();   // 暂停：停止唯一的活动定时器
+    updateWorkoutUI();
   });
   $('#woSkip').addEventListener('click', () => { if (wo) advance(); });
   function finishWorkout() {
-    clearInterval(wo.timer);
+    stopTimer();
     const meta = wo.meta;
     const profile = Store.getProfile() || {};
     const calories = AI.estimateCalories(meta.durationMin, profile, meta.env);
