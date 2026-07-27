@@ -1,0 +1,11 @@
+{
+  "name": "健身打卡",
+  "short_name": "健身打卡",
+  "description": "极简本地健身打卡 App：每日计划、本月进度、动作指导、身体情况",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#0e1014",
+  "theme_color": "#12b76a",
+  "lang": "zh-CN",
+  "icons": []
+}

@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Android build intermediates (regenerated)
+android/app/build/
+android/app/.gradle/
+android/.gradle/
+android/build/
+*.iml
+android/local.properties
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Capacitor-generated web assets (rebuilt by `npx cap sync android` on CI)
+android/app/src/main/assets/public/
+
+# Note: fitness-app/assets/videos/*.gif are the SOURCE demo assets and MUST be committed.

@@ -1,0 +1,8 @@
+{
+  "appId": "com.fitcheck.app",
+  "appName": "健身打卡",
+  "webDir": "fitness-app",
+  "server": {
+    "androidScheme": "https"
+  }
+}
