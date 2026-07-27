@@ -73,14 +73,6 @@ const AI = (function () {
     const scheme = repsScheme(profile && profile.goal);
     const dur = Math.max(10, durationMin || 30);
 
-    // 统计主训练动作数量，用于把总时长合理分配到每个动作
-    let mainCount = 0;
-    regions.forEach(rg => {
-      const pool = byRegion(rg).filter(e => equipmentAllowed(e.equipment, env));
-      if (pool.length) mainCount += (rg === '腿部' || rg === '背部') ? 2 : 1;
-    });
-    const mainSecs = mainCount ? Math.round(dur * 60 * 0.72 / mainCount) : 50;
-
     let plan = [];
 
     // 热身：居家/户外优先徒手有氧，健身房可用任意有氧器械
@@ -90,12 +82,21 @@ const AI = (function () {
       || DATA.find(e => e.equipment === 'body weight');
     if (wu) plan.push(makeItem(wu, 1, '动态热身', env, Math.min(240, Math.round(dur * 7.2) || 180), 'warmup'));
 
-    regions.forEach(rg => {
-      const pool = shuffle(byRegion(rg).filter(e => equipmentAllowed(e.equipment, env)));
-      if (!pool.length) return;
-      const n = (rg === '腿部' || rg === '背部') ? 2 : 1;
-      pool.slice(0, n).forEach(ex => plan.push(makeItem(ex, scheme.sets, scheme.reps, env, mainSecs, 'main')));
-    });
+    // 主训练：跨所选部位收集候选动作，目标约 3 个（多部位时最多 5 个），
+    // 轮询交替取，保证每个选中的部位都能覆盖到；总动作数 = 热身 + 主训练 + 放松 ≈ 5 个
+    const pools = regions.map(rg => shuffle(byRegion(rg).filter(e => equipmentAllowed(e.equipment, env))));
+    let mains = [];
+    const target = regions.length > 1 ? Math.min(5, pools.reduce((s, p) => s + p.length, 0)) : Math.min(3, pools.reduce((s, p) => s + p.length, 0));
+    let added = true;
+    while (added && mains.length < target) {
+      added = false;
+      for (const pool of pools) {
+        if (pool.length && mains.length < target) { mains.push(pool.shift()); added = true; }
+      }
+    }
+    if (wu) mains = mains.filter(m => m.id !== wu.id);
+    const mainSecs = mains.length ? Math.round(dur * 60 * 0.72 / mains.length) : 50;
+    mains.forEach(ex => plan.push(makeItem(ex, scheme.sets, scheme.reps, env, mainSecs, 'main')));
 
     // 放松：优先拉伸本次训练的部位（徒手），让"选什么部位就见什么部位"，否则退化为通用徒手拉伸
     let cd = null;

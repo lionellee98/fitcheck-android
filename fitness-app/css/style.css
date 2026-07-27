@@ -260,6 +260,12 @@ body {
 /* Photos */
 .photo-list { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
 .photo-thumb { width: 72px; height: 72px; border-radius: 14px; object-fit: cover; border: 1px solid var(--border); position: relative; }
+.ph-analysis { display: flex; gap: 12px; align-items: flex-start; background: var(--accent-soft); border: 1px solid var(--border); border-radius: 16px; padding: 12px; }
+.ph-skeleton { width: 120px; height: auto; border-radius: 12px; flex: none; background: #0001; }
+.ph-result { flex: 1; min-width: 0; }
+.ph-title { font-weight: 800; font-size: 14px; margin-bottom: 6px; }
+.ph-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.ph-reason { font-size: 12px; color: var(--text-dim); margin-top: 6px; line-height: 1.5; }
 
 /* Modals */
 .modal-mask {

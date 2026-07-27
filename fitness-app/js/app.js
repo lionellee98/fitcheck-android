@@ -524,6 +524,7 @@
     $$('#photoList .photo-thumb').forEach(im => im.addEventListener('click', () => {
       const p2 = Store.getProfile() || {}; p2.photos.splice(+im.dataset.i, 1); Store.setProfile(p2); renderPhotos();
     }));
+    const ab = $('#analyzePhotoBtn'); if (ab) ab.disabled = !(p.photos && p.photos.length);
   }
   const CONCERN = ['胸部', '背部', '肩部', '手臂', '腿部', '核心/腰腹', '有氧'];
   function renderConcern() {
@@ -537,6 +538,133 @@
     }));
     $('#concernAdvice').innerHTML = AI.concernAdvice(p);
   }
+
+  /* ============ 照片 AI 姿态分析（本地 TensorFlow.js + MoveNet） ============ */
+  // 在手机端本地运行姿态模型，检测人体关键点/对称性，启发式推断需加强部位。照片不出设备。
+  let _detector = null, _tfLoading = null;
+  function loadScript(src) {
+    return new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = src; s.crossOrigin = 'anonymous';
+      s.onload = () => res(); s.onerror = () => rej(new Error('脚本加载失败'));
+      document.head.appendChild(s);
+    });
+  }
+  async function ensurePoseDetector() {
+    if (_detector) return _detector;
+    if (_tfLoading) return _tfLoading;
+    _tfLoading = (async () => {
+      if (typeof tf === 'undefined') await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js');
+      if (typeof poseDetection === 'undefined') await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.min.js');
+      await tf.ready();
+      try { await tf.setBackend('webgl'); } catch (e) {}
+      _detector = await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet, { modelType: 'Lightning' });
+      return _detector;
+    })();
+    return _tfLoading;
+  }
+  const KP_INDEX = { nose:0, left_eye:1, right_eye:2, left_ear:3, right_ear:4, left_shoulder:5, right_shoulder:6, left_elbow:7, right_elbow:8, left_wrist:9, right_wrist:10, left_hip:11, right_hip:12, left_knee:13, right_knee:14, left_ankle:15, right_ankle:16 };
+  const REGION_KEYS = {
+    '肩部': ['left_shoulder', 'right_shoulder'],
+    '手臂': ['left_elbow', 'right_elbow', 'left_wrist', 'right_wrist'],
+    '腿部': ['left_hip', 'right_hip', 'left_knee', 'right_knee', 'left_ankle', 'right_ankle'],
+    '核心/腰腹': ['left_hip', 'right_hip'],
+    '胸部': ['left_shoulder', 'right_shoulder', 'left_hip', 'right_hip'],
+    '颈部': ['left_ear', 'right_ear', 'left_shoulder', 'right_shoulder'],
+  };
+  const SKELETON = [[5,6],[5,7],[7,9],[6,8],[8,10],[5,11],[6,12],[11,12],[11,13],[13,15],[12,14],[14,16]];
+  function kpByName(kps, name) { return (kps.find(k => k.name === name)) || kps[KP_INDEX[name]]; }
+  function regionVisibility(kps, keys) {
+    const pts = keys.map(n => kpByName(kps, n)).filter(p => p && p.score > 0.3);
+    if (!pts.length) return 0;
+    return pts.reduce((s, p) => s + p.score, 0) / pts.length;
+  }
+  function normAsym(kps, a, b, imgH) {
+    const pa = kpByName(kps, a), pb = kpByName(kps, b);
+    if (!pa || !pb || pa.score < 0.3 || pb.score < 0.3 || !imgH) return 0;
+    return Math.abs(pa.y - pb.y) / imgH;
+  }
+  function computeNeeds(kps, imgH) {
+    const shAsym = normAsym(kps, 'left_shoulder', 'right_shoulder', imgH);
+    const hipAsym = normAsym(kps, 'left_hip', 'right_hip', imgH);
+    const out = [];
+    for (const rg in REGION_KEYS) {
+      const vis = regionVisibility(kps, REGION_KEYS[rg]);
+      let pen = 0;
+      if (rg === '肩部') pen = Math.min(1, shAsym / 0.06);
+      if (rg === '核心/腰腹' || rg === '腿部') pen = Math.min(1, hipAsym / 0.06);
+      const health = 0.65 * vis + 0.35 * (1 - pen);
+      out.push({ rg, need: 1 - health, vis, pen });
+    }
+    out.sort((a, b) => b.need - a.need);
+    return out;
+  }
+  function drawSkeleton(img, kps) {
+    const W = 240, scale = W / img.width, H = img.height * scale;
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    const ctx = cv.getContext('2d');
+    ctx.drawImage(img, 0, 0, W, H);
+    ctx.strokeStyle = 'rgba(18,183,106,0.9)'; ctx.lineWidth = 2;
+    SKELETON.forEach(([a, b]) => {
+      const pa = kps[a], pb = kps[b];
+      if (pa && pb && pa.score > 0.3 && pb.score > 0.3) {
+        ctx.beginPath(); ctx.moveTo(pa.x * scale, pa.y * scale); ctx.lineTo(pb.x * scale, pb.y * scale); ctx.stroke();
+      }
+    });
+    ctx.fillStyle = '#0ba5ec';
+    kps.forEach(k => { if (k.score > 0.3) { ctx.beginPath(); ctx.arc(k.x * scale, k.y * scale, 3, 0, 7); ctx.fill(); } });
+    return cv;
+  }
+  function renderPhotoAnalysis(box, imgData, need, sugg) {
+    const tags = sugg.map(r => `<span class="tag">${r}</span>`).join('');
+    const reasons = need.slice(0, 3).map(x => {
+      const why = x.pen > 0.3 ? '姿态不对称' : (x.vis < 0.5 ? '该部位识别度偏低' : '综合评分偏低');
+      return `${x.rg}（${why}）`;
+    }).join('、');
+    box.innerHTML = `
+      <div class="ph-analysis">
+        <img src="${imgData}" class="ph-skeleton" alt="姿态分析">
+        <div class="ph-result">
+          <div class="ph-title">✨ 建议重点加强</div>
+          <div class="ph-tags">${tags}</div>
+          <div class="ph-reason">依据：${reasons}。这是基于姿态/对称性的本地启发式评估，非医学体脂分析。</div>
+          <button id="applyAnalysisBtn" class="ghost-btn" style="margin-top:8px">应用到每日计划</button>
+        </div>
+      </div>`;
+    $('#applyAnalysisBtn').addEventListener('click', () => {
+      const p = Store.getProfile() || {};
+      p.concernAreas = Array.from(new Set([...(p.concernAreas || []), ...sugg]));
+      Store.setProfile(p); renderConcern();
+      toast('已把建议部位加入「每日计划」重点');
+    });
+  }
+  async function analyzePhoto() {
+    const p = Store.getProfile() || {};
+    if (!p.photos || !p.photos.length) { toast('请先上传一张照片'); return; }
+    const btn = $('#analyzePhotoBtn'), box = $('#photoAnalysis');
+    btn.disabled = true; btn.textContent = '分析中…（首次需下载模型）';
+    box.innerHTML = '<span style="color:var(--text-dim)">正在加载本地 AI 模型并分析姿态，请稍候…</span>';
+    try {
+      const detector = await ensurePoseDetector();
+      const dataUrl = p.photos[p.photos.length - 1];
+      const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = dataUrl; });
+      const poses = await detector.estimatePoses(img);
+      if (!poses.length) {
+        box.innerHTML = '<span style="color:#b45309">未检测到清晰人体，请换一张全身/半身清晰的照片，或手动勾选下方部位。</span>';
+        return;
+      }
+      const kps = poses[0].keypoints;
+      const need = computeNeeds(kps, img.height);
+      const sugg = need.slice(0, 3).map(x => x.rg);
+      const canvas = drawSkeleton(img, kps);
+      renderPhotoAnalysis(box, canvas.toDataURL('image/jpeg', 0.7), need, sugg);
+    } catch (e) {
+      box.innerHTML = '<span style="color:#dc2626">分析失败：' + (e && e.message ? e.message : e) + '。可手动勾选下方部位。</span>';
+    } finally {
+      btn.disabled = false; btn.textContent = '✨ 智能分析需加强的部位';
+    }
+  }
+  $('#analyzePhotoBtn').addEventListener('click', analyzePhoto);
 
   /* ---------- boot ---------- */
   fetch('data/exercises.min.json')
