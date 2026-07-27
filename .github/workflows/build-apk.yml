@@ -40,6 +40,19 @@ jobs:
         env:
           RUN_NUMBER: ${{ github.run_number }}
 
+      - name: Vendor TF.js + MoveNet locally (offline-capable, no CDN)
+        run: |
+          mkdir -p /tmp/tfinstall
+          cd /tmp/tfinstall
+          npm init -y > /dev/null 2>&1
+          npm install @tensorflow/tfjs@4.22.0 @tensorflow-models/pose-detection@2.1.3 > /dev/null 2>&1
+          mkdir -p "$GITHUB_WORKSPACE/fitness-app/vendor/movenet"
+          cp /tmp/tfinstall/node_modules/@tensorflow/tfjs/dist/tf.min.js "$GITHUB_WORKSPACE/fitness-app/vendor/tf.min.js"
+          cp /tmp/tfinstall/node_modules/@tensorflow-models/pose-detection/dist/pose-detection.min.js "$GITHUB_WORKSPACE/fitness-app/vendor/pose-detection.min.js"
+          node "$GITHUB_WORKSPACE/.github/scripts/fetch_movenet.js"
+        env:
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+
       - name: Install deps & sync Capacitor
         run: |
           npm ci || npm install

@@ -544,11 +544,13 @@
   /* ============ 照片 AI 姿态分析（本地 TensorFlow.js + MoveNet） ============ */
   // 在手机端本地运行姿态模型，检测人体关键点/对称性，启发式推断需加强部位。照片不出设备。
   let _detector = null, _tfLoading = null;
-  function loadScript(src) {
+  // 本地打包的库/模型（CI 已随 APK 一起打包，运行时无外网依赖，国内不会被墙）
+  function loadLocal(src) {
     return new Promise((res, rej) => {
       const s = document.createElement('script');
-      s.src = src; s.crossOrigin = 'anonymous';
-      s.onload = () => res(); s.onerror = () => rej(new Error('脚本加载失败'));
+      s.src = src;
+      s.onload = () => res();
+      s.onerror = () => rej(new Error('本地模型库缺失，请更新到最新版 APK'));
       document.head.appendChild(s);
     });
   }
@@ -556,11 +558,18 @@
     if (_detector) return _detector;
     if (_tfLoading) return _tfLoading;
     _tfLoading = (async () => {
-      if (typeof tf === 'undefined') await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js');
-      if (typeof poseDetection === 'undefined') await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.min.js');
+      if (typeof tf === 'undefined') await loadLocal('vendor/tf.min.js');
+      if (typeof poseDetection === 'undefined') await loadLocal('vendor/pose-detection.min.js');
+      if (typeof tf === 'undefined' || typeof poseDetection === 'undefined') {
+        throw new Error('本地模型库未正确打包，请更新到最新版 APK');
+      }
       await tf.ready();
-      try { await tf.setBackend('webgl'); } catch (e) {}
-      _detector = await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet, { modelType: 'Lightning' });
+      try { await tf.setBackend('webgl'); }
+      catch (e) { try { await tf.setBackend('cpu'); } catch (e2) {} }
+      _detector = await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet, {
+        modelType: 'Lightning',
+        modelUrl: 'vendor/movenet/model.json'
+      });
       return _detector;
     })();
     return _tfLoading;
@@ -644,8 +653,8 @@
     const p = Store.getProfile() || {};
     if (!p.photos || !p.photos.length) { toast('请先上传一张照片'); return; }
     const btn = $('#analyzePhotoBtn'), box = $('#photoAnalysis');
-    btn.disabled = true; btn.textContent = '分析中…（首次需下载模型）';
-    box.innerHTML = '<span style="color:var(--text-dim)">正在加载本地 AI 模型并分析姿态，请稍候…</span>';
+    btn.disabled = true; btn.textContent = '分析中…';
+    box.innerHTML = '<span style="color:var(--text-dim)">正在用本地 AI 模型分析姿态，请稍候…</span>';
     try {
       const detector = await ensurePoseDetector();
       const dataUrl = p.photos[p.photos.length - 1];

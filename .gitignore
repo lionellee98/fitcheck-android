@@ -16,4 +16,7 @@ Thumbs.db
 # Capacitor-generated web assets (rebuilt by `npx cap sync android` on CI)
 android/app/src/main/assets/public/
 
+# TF.js + MoveNet model vendored locally by CI (rebuilt each build, not committed)
+fitness-app/vendor/
+
 # Note: fitness-app/assets/videos/*.gif are the SOURCE demo assets and MUST be committed.
