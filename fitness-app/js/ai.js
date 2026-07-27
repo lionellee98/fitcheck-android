@@ -97,8 +97,13 @@ const AI = (function () {
       pool.slice(0, n).forEach(ex => plan.push(makeItem(ex, scheme.sets, scheme.reps, env, mainSecs, 'main')));
     });
 
-    // 放松：徒手拉伸（任意场景均适用）
-    const cd = DATA.find(e => e.region === '核心/腰腹' && e.equipment === 'body weight')
+    // 放松：优先拉伸本次训练的部位（徒手），让"选什么部位就见什么部位"，否则退化为通用徒手拉伸
+    let cd = null;
+    if (regions && regions.length) {
+      const cdPool = DATA.filter(e => regions.includes(e.region) && e.equipment === 'body weight');
+      if (cdPool.length) cd = cdPool[Math.floor(Math.random() * cdPool.length)];
+    }
+    if (!cd) cd = DATA.find(e => e.region === '核心/腰腹' && e.equipment === 'body weight')
       || DATA.find(e => e.equipment === 'body weight' && e.region !== '有氧');
     if (cd && !plan.find(p => p.id === cd.id)) plan.push(makeItem(cd, 1, '拉伸放松', env, 180, 'cooldown'));
 

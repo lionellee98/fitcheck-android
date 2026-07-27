@@ -175,13 +175,14 @@
         <span class="sb-ic">${badge.ic}</span>
         <div class="sb-text"><div class="sb-t">${badge.t}</div><div class="sb-s">${badge.s}</div></div>
       </div>`;
+    const PHASE = { warmup: '热身', main: '训练', cooldown: '放松' };
     const items = plan.map((p, i) => `
       <div class="plan-item" data-id="${p.id}">
         <div class="ord">${i + 1}</div>
         <img loading="lazy" src="${gifUrl(p.gif)}" alt="${p.zh || p.name}" onerror="this.style.visibility='hidden'">
         <div class="pi-info">
           <div class="pi-name">${p.zh || p.name}</div>
-          <div class="pi-meta">${p.region} · ${p.equipment}</div>
+          <div class="pi-meta"><span class="pi-tag pi-${p.kind}">${PHASE[p.kind] || ''}</span>${p.region} · ${p.equipment}</div>
         </div>
         <div class="pi-reps">${p.sets === 1 ? p.reps : p.sets + ' 组 × ' + p.reps}</div>
       </div>`).join('');

@@ -157,7 +157,11 @@ body {
 .plan-item img { width: 58px; height: 58px; border-radius: 13px; object-fit: cover; flex: none; background: #0001; box-shadow: 0 4px 14px rgba(0,0,0,0.10); }
 .plan-item .pi-info { flex: 1; min-width: 0; }
 .plan-item .pi-name { font-weight: 800; font-size: 14px; }
-.plan-item .pi-meta { font-size: 12px; color: var(--text-dim); margin-top: 3px; }
+.plan-item .pi-meta { font-size: 12px; color: var(--text-dim); margin-top: 3px; display: flex; align-items: center; gap: 6px; }
+.plan-item .pi-tag { flex: none; font-size: 10.5px; font-weight: 800; line-height: 1; padding: 3px 7px; border-radius: 999px; letter-spacing: .3px; }
+.plan-item .pi-tag.pi-warmup { color: #b45309; background: rgba(251,191,36,.16); }
+.plan-item .pi-tag.pi-main { color: var(--accent); background: var(--accent-soft); }
+.plan-item .pi-tag.pi-cooldown { color: #0e7490; background: rgba(34,211,238,.16); }
 .plan-item .pi-reps { font-size: 12px; color: var(--accent); font-weight: 800; white-space: nowrap; }
 .plan-done-banner {
   background: var(--accent-soft); color: var(--accent); border-radius: var(--radius-sm);
