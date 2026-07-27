@@ -332,13 +332,46 @@
 
   /* 语音播报（Web Speech API，本地合成、不上传服务器） */
   let speechOn = true;
+  let ttsVoices = [];
+  let ttsReady = false;
+  function loadVoices() {
+    if (!('speechSynthesis' in window)) return;
+    try { ttsVoices = window.speechSynthesis.getVoices() || []; } catch (e) { ttsVoices = []; }
+    ttsReady = true;
+  }
+  if ('speechSynthesis' in window) {
+    loadVoices();
+    window.speechSynthesis.onvoiceschanged = loadVoices;   // Android 上 voices 异步加载，需监听
+  }
+  // 优先选中文语音；没有则回落到任意可用语音（避免静默）
+  function pickZhVoice() {
+    if (!ttsVoices.length) return null;
+    return ttsVoices.find(v => /^zh/i.test(v.lang)) ||
+           ttsVoices.find(v => /(chinese|中文|普通话|国语)/i.test(v.name)) || null;
+  }
   function speak(text) {
+    if (!speechOn || !('speechSynthesis' in window) || !text) return;
     try {
-      if (!speechOn || !('speechSynthesis' in window) || !text) return;
       const u = new SpeechSynthesisUtterance(text);
-      u.lang = 'zh-CN'; u.rate = 1.0; u.pitch = 1.0; u.volume = 1.0;
-      window.speechSynthesis.speak(u);
+      const v = pickZhVoice();
+      if (v) { u.voice = v; u.lang = v.lang; } else { u.lang = 'zh-CN'; }
+      u.rate = 1.0; u.pitch = 1.0; u.volume = 1.0;
+      // Android WebView 已知 chromium bug：cancel 与 speak 在同一同步调用栈内会直接丢弃本次播报，
+      // 必须错开一个 macrotask（setTimeout）才能稳定发声。
+      window.speechSynthesis.cancel();
+      setTimeout(() => {
+        if (!speechOn || !('speechSynthesis' in window)) return;
+        try { window.speechSynthesis.speak(u); } catch (e) {}
+      }, 60);
     } catch (e) { /* 部分 WebView 不支持语音，忽略即可 */ }
+  }
+  // 开场自检：若设备没有中文语音包，明确提示用户（否则会静默无声音，让人误以为 App 坏了）
+  function warnIfNoTts() {
+    if (!('speechSynthesis' in window)) { toast('当前环境不支持语音播报'); return; }
+    setTimeout(() => {
+      if (ttsReady && ttsVoices.length && !pickZhVoice())
+        toast('未检测到中文语音包，请安装「Google 文字转语音」并下载中文(普通话)');
+    }, 300);
   }
   function stopSpeech() { try { if ('speechSynthesis' in window) window.speechSynthesis.cancel(); } catch (e) {} }
 
@@ -358,9 +391,8 @@
     wo = { i: 0, j: 1, phase: 'work', remaining: plan[0].secs, total: plan[0].secs,
       running: false, timer: null, plan, meta: plan._meta || { durationMin: 30, env: 'gym' } };
     openModal('workoutModal');
-    // 开场语音提示
-    speak('训练开始，准备好了吗？我们开始今天的训练。');
-    setPhase('work', plan[0].secs);   // 播报第一组动作并开始计时
+    warnIfNoTts();
+    setPhase('work', plan[0].secs);   // 进入第一组，由 setPhase 统一播报（含开场提示），避免重复触发被吞
   }
   function startTimer() {
     stopTimer();                // 永远只保留一个活动定时器
@@ -374,10 +406,12 @@
     wo.phase = phase; wo.remaining = secs; wo.total = secs;
     if (phase === 'work') {
       const it = curItem();
+      const isLastSet = (wo.i === wo.plan.length - 1 && wo.j === it.sets);
       if (it.kind === 'warmup') speak('热身开始，活动开关节。');
       else if (it.kind === 'cooldown') speak('拉伸放松开始，慢慢来。');
       else {
-        const lead = (wo.i === wo.plan.length - 1 && wo.j === it.sets) ? '最后一组，' : '';
+        const lead = (wo.i === 0 && wo.j === 1) ? '训练开始，准备好了吗？'
+                   : isLastSet ? '最后一组，' : '';
         speak(lead + '第 ' + wo.j + ' 组，开始。' + (it.core ? it.core : ''));
       }
     } else if (phase === 'rest') {
