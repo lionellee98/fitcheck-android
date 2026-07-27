@@ -155,17 +155,17 @@
         <span id="woSetInfo" class="wo-set-info"></span>
       </div>
       <div id="woTimerWrap" class="wo-timer-wrap">
-        <svg class="wo-ring" viewBox="0 0 120 120">
-          <circle class="wo-ring-bg" cx="60" cy="60" r="54"></circle>
-          <circle id="woRing" class="wo-ring-fg" cx="60" cy="60" r="54"></circle>
-        </svg>
-        <div id="woTime" class="wo-time">00:00</div>
+        <div id="woClock" class="wo-clock">
+          <div id="woBar" class="wo-clock-bar"></div>
+          <div id="woTime" class="wo-time">00:00</div>
+        </div>
       </div>
       <div id="woExercise" class="wo-exercise"></div>
       <div id="woCoach" class="wo-coach"></div>
       <div class="wo-controls">
         <button id="woToggle" class="primary-btn">开始</button>
         <button id="woSkip" class="ghost-btn">跳过这组</button>
+        <button id="woSound" class="ghost-btn wo-sound" title="语音播报开关">🔊</button>
       </div>
     </div>
   </div>

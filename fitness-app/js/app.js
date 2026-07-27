@@ -62,6 +62,15 @@
     });
   });
 
+  // 生命周期兜底：App 从后台回到前台（WebView 可能被系统回收/重建）时，
+  // 若停留在每日计划页，重新从草稿恢复「开始跟练」按钮，避免其偶发消失。
+  function syncPlanOnReturn() {
+    if (!EXERCISES.length) return;
+    if ($('#page-plan').classList.contains('active')) renderPlan();
+  }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) syncPlanOnReturn(); });
+  window.addEventListener('pageshow', syncPlanOnReturn);
+
   /* ---------- daily quote ---------- */
   function maybeQuote() {
     const today = Store.todayStr();
@@ -72,8 +81,8 @@
   }
   $('#quoteClose').addEventListener('click', () => closeModal('quoteModal'));
   $$('[data-close]').forEach(b => b.addEventListener('click', () => closeModal(b.dataset.close)));
-  // 关闭跟练弹窗时停止计时，避免后台定时器继续走导致再次打开无法暂停
-  document.querySelector('[data-close="workoutModal"]').addEventListener('click', stopTimer);
+  // 关闭跟练弹窗时停止计时与语音，避免后台定时器/语音继续走导致再次打开无法暂停
+  document.querySelector('[data-close="workoutModal"]').addEventListener('click', () => { stopTimer(); stopSpeech(); });
 
   /* ================= 每日计划 ================= */
   let planCfg = { duration: 'ai', custom: '', env: 'gym', partsMode: 'ai', parts: [] };
@@ -139,7 +148,8 @@
     currentPlan._meta = meta;
     const slim = plan.map(p => ({
       id: p.id, name: p.name, zh: p.zh, gif: p.gif, region: p.region,
-      equipment: p.equipment, sets: p.sets, reps: p.reps, secs: p.secs, kind: p.kind
+      equipment: p.equipment, sets: p.sets, reps: p.reps, secs: p.secs, kind: p.kind,
+      intensity: p.intensity, restSecs: p.restSecs, core: p.core
     }));
     Store.saveDraft(Store.todayStr(), { plan: slim, meta });
     $('#planPreview').innerHTML = '';   // 提交后隐藏实时预览，展示已锁定计划
@@ -150,24 +160,69 @@
   function resetPlanToPreview() {
     currentPlan = null;
     Store.clearDraft(Store.todayStr());
+    $('#planResult').innerHTML = '';    // 清掉可能残留的已锁定计划，避免陈旧的「开始跟练」
     renderPlanPreview();
+  }
+
+  // 统一的动作列表渲染：按 热身/训练/放松 分组，并在每个分类旁显示该分类总耗时(MM:SS)
+  function phaseTotal(items) {
+    return items.reduce((s, p) => {
+      const work = (p.sets || 1) * (p.secs || 0);
+      const rests = Math.max(0, (p.sets || 1) - 1) * (p.restSecs || 0);
+      return s + work + rests;
+    }, 0);
+  }
+  function planItemsHTML(plan) {
+    const PHASE = { warmup: '热身', main: '训练', cooldown: '放松' };
+    const ORDER = ['warmup', 'main', 'cooldown'];
+    let html = '';
+    ORDER.forEach(kind => {
+      const items = plan.filter(p => p.kind === kind);
+      if (!items.length) return;
+      html += `<div class="phase-head"><span class="phase-name">${PHASE[kind]}</span>` +
+        `<span class="phase-time">${fmtTime(phaseTotal(items))}</span></div>`;
+      html += items.map(p => `
+        <div class="plan-item" data-id="${p.id}">
+          <div class="ord">${plan.indexOf(p) + 1}</div>
+          <img loading="lazy" src="${gifUrl(p.gif)}" alt="${p.zh || p.name}" onerror="this.style.visibility='hidden'">
+          <div class="pi-info">
+            <div class="pi-name">${p.zh || p.name}</div>
+            <div class="pi-meta"><span class="pi-tag pi-${p.kind}">${PHASE[kind] || ''}</span>${p.region} · ${p.equipment} · ${p.sets}组×${p.reps}</div>
+          </div>
+          <div class="pi-reps">${fmtTime((p.sets || 1) * (p.secs || 0))}</div>
+        </div>`).join('');
+    });
+    return html;
   }
   function envLabel(e) { return e === 'gym' ? '健身房' : e === 'home' ? '居家' : '室外体育场'; }
 
+  // 取得当前可训练计划：优先内存中的 currentPlan，否则从草稿/已完成记录恢复。
+  // 这是「开始跟练」偶发消失的根因兜底——即便 currentPlan 因页面状态丢失为 null，
+  // 也能从持久化的草稿重新取回，按钮永远点得出去。
+  function getActivePlan() {
+    if (currentPlan && currentPlan.length) return currentPlan;
+    const today = Store.todayStr();
+    const rec = Store.getDay(today);
+    if (rec && rec.completed && rec.plan && rec.plan.length) {
+      currentPlan = rec.plan.map(p => Object.assign({}, p));
+      currentPlan._meta = { durationMin: rec.durationMin, env: rec.env };
+      return currentPlan;
+    }
+    const draft = Store.getDraft(today);
+    if (draft && draft.plan && draft.plan.length) {
+      currentPlan = draft.plan.map(p => Object.assign({}, p));
+      currentPlan._meta = Object.assign({}, draft.meta);
+      return currentPlan;
+    }
+    return null;
+  }
+
   function renderPlanResult() {
     const box = $('#planResult');
-    if (!currentPlan || !currentPlan.length) { box.innerHTML = ''; return; }
-    const items = currentPlan.map((p, i) => `
-      <div class="plan-item" data-id="${p.id}">
-        <div class="ord">${i + 1}</div>
-        <img loading="lazy" src="${gifUrl(p.gif)}" alt="${p.zh || p.name}" onerror="this.style.visibility='hidden'">
-        <div class="pi-info">
-          <div class="pi-name">${p.zh || p.name}</div>
-          <div class="pi-meta">${p.region} · ${p.equipment}</div>
-        </div>
-        <div class="pi-reps">${p.sets === 1 ? p.reps : p.sets + ' 组 × ' + p.reps}</div>
-      </div>`).join('');
-    box.innerHTML = `<div class="card-title">今日动作顺序</div>` + items +
+    const plan = getActivePlan();
+    if (!plan || !plan.length) { box.innerHTML = ''; return; }
+    currentPlan = plan;
+    box.innerHTML = `<div class="card-title">今日动作顺序</div>` + planItemsHTML(plan) +
       `<button id="startWorkout" class="primary-btn" style="margin-top:6px">▶ 开始跟练</button>`;
     $$('#planResult .plan-item').forEach(el => el.addEventListener('click', () => {
       const ex = AI.byId(el.dataset.id);
@@ -220,7 +275,7 @@
         <div class="pi-reps">${p.sets === 1 ? p.reps : p.sets + ' 组 × ' + p.reps}</div>
       </div>`).join('');
     box.innerHTML = head +
-      `<div class="card-title preview-title">今日训练动作预览 · 共 ${plan.length} 个</div>` + items +
+      `<div class="card-title preview-title">今日训练动作预览 · 共 ${plan.length} 个</div>` + planItemsHTML(plan) +
       `<button id="startWorkoutPreview" class="primary-btn" style="margin-top:10px;width:100%">▶ 开始跟练</button>`;
     $$('#planPreview .plan-item').forEach(el => el.addEventListener('click', () => {
       const ex = AI.byId(el.dataset.id); if (ex) showExercise(ex);
@@ -272,8 +327,21 @@
   });
 
   /* ================= 跟练计时器 ================= */
-  const REST = 20;
   let wo = null;
+  function rand(a, b) { return Math.floor(a + Math.random() * (b - a + 1)); }
+
+  /* 语音播报（Web Speech API，本地合成、不上传服务器） */
+  let speechOn = true;
+  function speak(text) {
+    try {
+      if (!speechOn || !('speechSynthesis' in window) || !text) return;
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = 'zh-CN'; u.rate = 1.0; u.pitch = 1.0; u.volume = 1.0;
+      window.speechSynthesis.speak(u);
+    } catch (e) { /* 部分 WebView 不支持语音，忽略即可 */ }
+  }
+  function stopSpeech() { try { if ('speechSynthesis' in window) window.speechSynthesis.cancel(); } catch (e) {} }
+
   const COACH = {
     warmup: '活动关节、升高体温，让身体进入训练状态，呼吸均匀。',
     work: '保持动作标准、控制节奏；发力时呼气，还原时吸气，感受目标肌群收缩。',
@@ -282,14 +350,17 @@
   };
 
   function startWorkout() {
-    if (!currentPlan || !currentPlan.length) { toast('请先生成今日计划'); return; }
+    const plan = getActivePlan();
+    if (!plan || !plan.length) { toast('请先生成今日计划'); return; }
     const old = $('#workoutModal .wo-summary'); if (old) old.remove();
-    const plan = currentPlan;
     stopTimer();                // 防止上一次会话遗留的定时器继续走
+    stopSpeech();
     wo = { i: 0, j: 1, phase: 'work', remaining: plan[0].secs, total: plan[0].secs,
-      running: false, timer: null, plan, meta: currentPlan._meta || { durationMin: 30, env: 'gym' } };
-    updateWorkoutUI();
+      running: false, timer: null, plan, meta: plan._meta || { durationMin: 30, env: 'gym' } };
     openModal('workoutModal');
+    // 开场语音提示
+    speak('训练开始，准备好了吗？我们开始今天的训练。');
+    setPhase('work', plan[0].secs);   // 播报第一组动作并开始计时
   }
   function startTimer() {
     stopTimer();                // 永远只保留一个活动定时器
@@ -301,13 +372,31 @@
   function curItem() { return wo.plan[wo.i]; }
   function setPhase(phase, secs) {
     wo.phase = phase; wo.remaining = secs; wo.total = secs;
+    if (phase === 'work') {
+      const it = curItem();
+      if (it.kind === 'warmup') speak('热身开始，活动开关节。');
+      else if (it.kind === 'cooldown') speak('拉伸放松开始，慢慢来。');
+      else {
+        const lead = (wo.i === wo.plan.length - 1 && wo.j === it.sets) ? '最后一组，' : '';
+        speak(lead + '第 ' + wo.j + ' 组，开始。' + (it.core ? it.core : ''));
+      }
+    } else if (phase === 'rest') {
+      speak('休息 ' + secs + ' 秒，调整呼吸，准备下一组。');
+    }
     updateWorkoutUI();
+  }
+  // 间歇休息时长：高强度动作 60~90 秒，低强度 30~45 秒（优先用计划生成时算好的 restSecs）
+  function restSecondsFor(item) {
+    if (item.restSecs) return item.restSecs;
+    return item.intensity === 'high' ? rand(60, 90) : rand(30, 45);
   }
   function advance() {
     const item = curItem();
     if (wo.phase === 'work') {
-      if (wo.j < item.sets) { wo.j++; setPhase('rest', REST); }
+      if (wo.j < item.sets) { wo.j++; setPhase('rest', restSecondsFor(item)); }
       else {
+        const isLast = (wo.i === wo.plan.length - 1);
+        if (isLast) speak('最后一组完成，太棒了！坚持就是胜利！');
         wo.i++;
         if (wo.i >= wo.plan.length) { finishWorkout(); return; }
         wo.j = 1; setPhase('work', curItem().secs);
@@ -318,6 +407,7 @@
   }
   function woTick() {
     wo.remaining--;
+    if (wo.phase === 'rest' && wo.remaining > 0 && wo.remaining <= 3) speak(String(wo.remaining));
     if (wo.remaining <= 0) advance();
     else updateWorkoutUI();
   }
@@ -343,20 +433,26 @@
     $('#woExercise').textContent = item.zh || item.name;
     $('#woCoach').textContent = COACH[wo.phase] || '';
     $('#woTime').textContent = fmtTime(Math.max(0, wo.remaining));
-    const C = 2 * Math.PI * 54;
-    const off = wo.total ? C * (1 - wo.remaining / wo.total) : 0;
-    $('#woRing').style.strokeDashoffset = off;
+    const pct = wo.total ? Math.max(0, Math.min(100, (wo.remaining / wo.total) * 100)) : 0;
+    const bar = $('#woBar'); if (bar) bar.style.width = pct + '%';
     $('#woToggle').textContent = wo.running ? '暂停' : '开始';
   }
   $('#woToggle').addEventListener('click', () => {
     if (!wo) return;
     wo.running = !wo.running;
-    if (wo.running) startTimer(); else stopTimer();   // 暂停：停止唯一的活动定时器
+    if (wo.running) { startTimer(); }
+    else { stopTimer(); stopSpeech(); }   // 暂停：停止唯一的活动定时器并停止语音
     updateWorkoutUI();
   });
   $('#woSkip').addEventListener('click', () => { if (wo) advance(); });
+  $('#woSound').addEventListener('click', () => {
+    speechOn = !speechOn;
+    const b = $('#woSound'); if (b) b.textContent = speechOn ? '🔊' : '🔇';
+    if (!speechOn) stopSpeech();
+  });
   function finishWorkout() {
     stopTimer();
+    stopSpeech();
     Store.clearDraft(Store.todayStr());   // 已打卡，清掉未完成的草稿
     const meta = wo.meta;
     const profile = Store.getProfile() || {};
@@ -605,8 +701,11 @@
       await tf.ready();
       try { await tf.setBackend('webgl'); }
       catch (e) { try { await tf.setBackend('cpu'); } catch (e2) {} }
+      // modelType 必须是完整枚举值；pose-detection 的 validateModelConfig 仅接受
+      // 'SinglePose.Lightning' / 'SinglePose.Thunder' / 'MultiPose.Lightning'，
+      // 之前用 'Lightning' 会抛 "Invalid architecture Lightning"。
       _detector = await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet, {
-        modelType: 'Lightning',
+        modelType: poseDetection.movenetModelType ? poseDetection.movenetModelType.LIGHTNING : 'SinglePose.Lightning',
         modelUrl: 'vendor/movenet/model.json'
       });
       return _detector;

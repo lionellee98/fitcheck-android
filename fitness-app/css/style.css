@@ -167,6 +167,12 @@ body {
   background: var(--accent-soft); color: var(--accent); border-radius: var(--radius-sm);
   padding: 13px 15px; font-weight: 800; margin-bottom: 12px; font-size: 14px;
 }
+/* 今日动作顺序：按 热身/训练/放松 分组的分类头 + 该分类总耗时 */
+.phase-head { display: flex; align-items: baseline; justify-content: space-between; margin: 16px 2px 8px; }
+.phase-head:first-of-type { margin-top: 4px; }
+.phase-name { font-weight: 800; font-size: 14px; color: var(--text); letter-spacing: 0.3px; }
+.phase-time { font-size: 13px; font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
+.wo-sound { flex: none; width: 52px; padding: 12px 0; font-size: 18px; text-align: center; }
 
 /* Training-parts module */
 .parts-chips { margin-top: 12px; }
@@ -303,9 +309,10 @@ body {
 .wo-modal { text-align: center; }
 .wo-phase { font-size: 13px; color: var(--accent); font-weight: 800; letter-spacing: 1px; margin-bottom: 10px; }
 .wo-media-wrap {
-  position: relative; width: 100%; max-width: 280px; margin: 0 auto 12px;
-  border-radius: 18px; overflow: hidden; aspect-ratio: 4 / 3;
+  position: relative; width: 100%; max-width: 340px; margin: 0 auto 14px;
+  border-radius: 22px; overflow: hidden; aspect-ratio: 1 / 1;
   background: var(--surface-2); border: 1px solid var(--border);
+  box-shadow: var(--shadow);
 }
 .wo-media { width: 100%; height: 100%; object-fit: cover; display: block; }
 .wo-media[src=""] { visibility: hidden; }
@@ -314,12 +321,13 @@ body {
   background: rgba(0,0,0,0.55); color: #fff; backdrop-filter: blur(6px);
   font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px;
 }
-.wo-timer-wrap { position: relative; width: 200px; height: 200px; margin: 0 auto 14px; }
-.wo-ring { width: 200px; height: 200px; transform: rotate(-90deg); }
-.wo-ring-bg { fill: none; stroke: var(--surface-2); stroke-width: 8; }
-.wo-ring-fg { fill: none; stroke: var(--accent); stroke-width: 8; stroke-linecap: round;
-  stroke-dasharray: 339.292; stroke-dashoffset: 0; transition: stroke-dashoffset 0.3s linear; }
-.wo-time { position: absolute; inset: 0; display: grid; place-items: center; font-size: 38px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.wo-timer-wrap { width: 100%; max-width: 340px; margin: 0 auto 14px; }
+.wo-clock { position: relative; height: 54px; border-radius: 999px; background: var(--surface-2);
+  overflow: hidden; border: 1px solid var(--border); }
+.wo-clock-bar { position: absolute; left: 0; top: 0; bottom: 0; width: 0%;
+  background: var(--grad); transition: width 1s linear; }
+.wo-time { position: absolute; inset: 0; display: grid; place-items: center;
+  font-size: 27px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: 1px; }
 .wo-exercise { font-size: 18px; font-weight: 800; margin-bottom: 6px; }
 .wo-coach { font-size: 14px; color: var(--text-dim); line-height: 1.6; min-height: 40px; margin-bottom: 16px; padding: 0 8px; }
 .wo-controls { display: flex; gap: 10px; }

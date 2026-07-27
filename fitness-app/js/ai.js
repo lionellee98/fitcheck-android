@@ -61,9 +61,31 @@ const AI = (function () {
     }
     return a;
   }
+  function rand(a, b) { return Math.floor(a + Math.random() * (b - a + 1)); }
+  // 动作强度：复合大重量（杠铃/史密斯/龙门架/腿/背）判为高强度，其余（徒手/孤立）为低强度
+  function intensityOf(ex) {
+    const eq = (ex.equipment || '').toLowerCase();
+    if (['barbell', 'smith', 'cable', 'leverage machine'].includes(eq)) return 'high';
+    if (['腿部', '背部'].includes(ex.region)) return 'high';
+    return 'low';
+  }
+  function perRep(intensity) { return intensity === 'high' ? 4 : 3; } // 单个动作耗时（秒）
+  function restFor(intensity) { return intensity === 'high' ? rand(60, 90) : rand(30, 45); }
+  // 把 "8-12 次" 解析为数字（取上限 12），用于按 单次耗时×数量 估算该组时长
+  function repsToNum(repsStr) {
+    const nums = (repsStr || '').match(/\d+/g);
+    if (!nums || !nums.length) return 0;
+    return Math.max.apply(null, nums.map(Number));
+  }
+  function firstSentence(s) {
+    const m = (s || '').split(/[。.!?！？]/)[0];
+    return m ? m.trim() : '';
+  }
   function makeItem(ex, sets, reps, env, secs, kind) {
+    const intensity = intensityOf(ex);
     return { id: ex.id, name: ex.name, zh: ex.zh, gif: ex.gif, region: ex.region,
-      equipment: ex.equipment, sets, reps, secs, kind };
+      equipment: ex.equipment, sets, reps, secs, kind,
+      intensity, restSecs: restFor(intensity), core: firstSentence(ex.desc) };
   }
 
   function generatePlan(opts) {
@@ -75,12 +97,13 @@ const AI = (function () {
 
     let plan = [];
 
-    // 热身：居家/户外优先徒手有氧，健身房可用任意有氧器械
+    // 热身：居家/户外优先徒手有氧，健身房可用任意有氧器械；时长为固定连续块（约 2~4 分钟）
     const wu = (env === 'gym'
       ? DATA.find(e => e.region === '有氧')
       : DATA.find(e => e.region === '有氧' && e.equipment === 'body weight'))
       || DATA.find(e => e.equipment === 'body weight');
-    if (wu) plan.push(makeItem(wu, 1, '动态热身', env, Math.min(240, Math.round(dur * 7.2) || 180), 'warmup'));
+    const warmupSecs = Math.max(120, Math.min(240, Math.round(dur * 0.08 * 60)));
+    if (wu) plan.push(makeItem(wu, 1, '动态热身', env, warmupSecs, 'warmup'));
 
     // 主训练：跨所选部位收集候选动作，目标约 3 个（多部位时最多 5 个），
     // 轮询交替取，保证每个选中的部位都能覆盖到；总动作数 = 热身 + 主训练 + 放松 ≈ 5 个
@@ -95,8 +118,13 @@ const AI = (function () {
       }
     }
     if (wu) mains = mains.filter(m => m.id !== wu.id);
-    const mainSecs = mains.length ? Math.round(dur * 60 * 0.72 / mains.length) : 50;
-    mains.forEach(ex => plan.push(makeItem(ex, scheme.sets, scheme.reps, env, mainSecs, 'main')));
+    // 每个动作的组时长 = 单次动作耗时(perRep) × 次数(repsToNum)，例如引体向上 10 个 ≈ 30 秒/组
+    mains.forEach(ex => {
+      const its = intensityOf(ex);
+      const rn = repsToNum(scheme.reps) || 10;
+      const secs = Math.max(20, perRep(its) * rn);
+      plan.push(makeItem(ex, scheme.sets, scheme.reps, env, secs, 'main'));
+    });
 
     // 放松：优先拉伸本次训练的部位（徒手），让"选什么部位就见什么部位"，否则退化为通用徒手拉伸
     let cd = null;
@@ -106,7 +134,7 @@ const AI = (function () {
     }
     if (!cd) cd = DATA.find(e => e.region === '核心/腰腹' && e.equipment === 'body weight')
       || DATA.find(e => e.equipment === 'body weight' && e.region !== '有氧');
-    if (cd && !plan.find(p => p.id === cd.id)) plan.push(makeItem(cd, 1, '拉伸放松', env, 180, 'cooldown'));
+    if (cd && !plan.find(p => p.id === cd.id)) plan.push(makeItem(cd, 1, '拉伸放松', env, 120, 'cooldown'));
 
     return plan;
   }
