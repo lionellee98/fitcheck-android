@@ -17,11 +17,11 @@ jobs:
         with:
           node-version: 22
 
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
 
       - name: Set up Android SDK command-line tools
         uses: android-actions/setup-android@v3
@@ -31,8 +31,6 @@ jobs:
           yes | sdkmanager --licenses > /dev/null 2>&1 || true
           sdkmanager "platforms;android-35" "build-tools;35.0.0"
           echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "SDK components installed:"
-          sdkmanager --list_installed | head -20
 
       - name: Install deps & sync Capacitor
         run: |
@@ -43,7 +41,9 @@ jobs:
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --stacktrace
+          ./gradlew assembleDebug --stacktrace --no-daemon
+        env:
+          ORG_GRADLE_PROJECT_jvmargs: "-Xmx4096m -XX:+HeapDumpOnOutOfMemoryError"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
