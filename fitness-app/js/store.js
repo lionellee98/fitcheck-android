@@ -31,10 +31,15 @@ const Store = (function () {
     return out;
   }
 
+  // 当天未完成计划的草稿（未打卡前持久化，避免切换页面/重开导致「开始跟练」消失）
+  function getDraft(date) { return (state.drafts && state.drafts[date]) ? state.drafts[date] : null; }
+  function saveDraft(date, d) { state.drafts = state.drafts || {}; state.drafts[date] = d; persist(); }
+  function clearDraft(date) { if (state.drafts) { delete state.drafts[date]; persist(); } }
+
   function lastQuoteDate() { return state.lastQuoteDate || ''; }
   function setLastQuoteDate(d) { state.lastQuoteDate = d; persist(); }
   function getTheme() { return state.theme || ''; }
   function setTheme(t) { state.theme = t; persist(); }
 
-  return { todayStr, getProfile, setProfile, getDay, saveDay, getAllDays, countDays, getMonth, lastQuoteDate, setLastQuoteDate, getTheme, setTheme };
+  return { todayStr, getProfile, setProfile, getDay, saveDay, getAllDays, countDays, getMonth, getDraft, saveDraft, clearDraft, lastQuoteDate, setLastQuoteDate, getTheme, setTheme };
 })();

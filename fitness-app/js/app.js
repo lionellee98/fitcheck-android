@@ -107,17 +107,50 @@
       currentPlan = rec.plan.map(p => Object.assign({}, p));
       currentPlan._meta = { durationMin: rec.durationMin, env: rec.env };
       $('#planPreview').innerHTML = '';
+      Store.clearDraft(today);
       renderPartsChips();
     } else {
-      const dur = computeDuration();
-      hero.innerHTML = `<div class="h-label">今日尚未打卡</div>
-        <div class="h-main">${dur} 分钟训练</div>
-        <div class="h-sub">选好条件，下方实时预览今日动作</div>`;
-      currentPlan = null;
-      renderPartsChips();
-      renderPlanPreview();
+      // 恢复未完成的当天计划草稿，让「开始跟练」在切换页面或重开 App 后依然在
+      const draft = Store.getDraft(today);
+      if (draft && draft.plan && draft.plan.length) {
+        hero.innerHTML = `<div class="h-label">今日训练待开始</div>
+          <div class="h-main">${draft.meta.durationMin} 分钟</div>
+          <div class="h-sub">已生成计划 · 点击下方「开始跟练」即可训练</div>`;
+        currentPlan = draft.plan.map(p => Object.assign({}, p));
+        currentPlan._meta = Object.assign({}, draft.meta);
+        $('#planPreview').innerHTML = '';
+        renderPartsChips();
+      } else {
+        const dur = computeDuration();
+        hero.innerHTML = `<div class="h-label">今日尚未打卡</div>
+          <div class="h-main">${dur} 分钟训练</div>
+          <div class="h-sub">选好条件，下方实时预览今日动作</div>`;
+        currentPlan = null;
+        renderPartsChips();
+        renderPlanPreview();
+      }
     }
     renderPlanResult();
+  }
+
+  // 提交（锁定）计划：写入草稿并渲染「今日动作顺序 + 开始跟练」
+  function commitPlan(plan, meta) {
+    currentPlan = plan;
+    currentPlan._meta = meta;
+    const slim = plan.map(p => ({
+      id: p.id, name: p.name, zh: p.zh, gif: p.gif, region: p.region,
+      equipment: p.equipment, sets: p.sets, reps: p.reps, secs: p.secs, kind: p.kind
+    }));
+    Store.saveDraft(Store.todayStr(), { plan: slim, meta });
+    $('#planPreview').innerHTML = '';   // 提交后隐藏实时预览，展示已锁定计划
+    renderPlanResult();
+  }
+
+  // 修改训练条件 → 退回实时预览并清掉草稿（让计划重新随配置更新）
+  function resetPlanToPreview() {
+    currentPlan = null;
+    Store.clearDraft(Store.todayStr());
+    renderPlanPreview();
   }
   function envLabel(e) { return e === 'gym' ? '健身房' : e === 'home' ? '居家' : '室外体育场'; }
 
@@ -155,7 +188,7 @@
       set.has(c.dataset.r) ? set.delete(c.dataset.r) : set.add(c.dataset.r);
       planCfg.parts = Array.from(set);
       renderPartsChips();
-      if (!isTodayCompleted()) { currentPlan = null; renderPlanPreview(); }
+      if (!isTodayCompleted()) resetPlanToPreview();
     }));
   }
 
@@ -187,10 +220,17 @@
         <div class="pi-reps">${p.sets === 1 ? p.reps : p.sets + ' 组 × ' + p.reps}</div>
       </div>`).join('');
     box.innerHTML = head +
-      `<div class="card-title preview-title">今日训练动作预览 · 共 ${plan.length} 个</div>` + items;
+      `<div class="card-title preview-title">今日训练动作预览 · 共 ${plan.length} 个</div>` + items +
+      `<button id="startWorkoutPreview" class="primary-btn" style="margin-top:10px;width:100%">▶ 开始跟练</button>`;
     $$('#planPreview .plan-item').forEach(el => el.addEventListener('click', () => {
       const ex = AI.byId(el.dataset.id); if (ex) showExercise(ex);
     }));
+    const pv = $('#startWorkoutPreview');
+    if (pv) pv.addEventListener('click', () => {
+      if (!pendingPlan || !pendingPlan.length) { toast('请先生成今日计划'); return; }
+      commitPlan(pendingPlan, pendingMeta);   // 直接以预览计划开始
+      startWorkout();
+    });
   }
 
   $('#durationSeg').addEventListener('click', e => {
@@ -198,27 +238,27 @@
     $$('#durationSeg button').forEach(b => b.classList.toggle('active', b === e.target));
     planCfg.duration = e.target.dataset.v;
     if (planCfg.duration !== 'ai') $('#durationCustom').value = '';
-    if (!isTodayCompleted()) { currentPlan = null; renderPlanPreview(); }
+    if (!isTodayCompleted()) resetPlanToPreview();
   });
   $('#durationCustom').addEventListener('input', e => {
     planCfg.custom = e.target.value;
     if (e.target.value) {
       $$('#durationSeg button').forEach(b => b.classList.remove('active'));
-      if (!isTodayCompleted()) { currentPlan = null; renderPlanPreview(); }
+      if (!isTodayCompleted()) resetPlanToPreview();
     }
   });
   $('#envSeg').addEventListener('click', e => {
     if (e.target.tagName !== 'BUTTON') return;
     $$('#envSeg button').forEach(b => b.classList.toggle('active', b === e.target));
     planCfg.env = e.target.dataset.v;
-    if (!isTodayCompleted()) { currentPlan = null; renderPlanPreview(); }
+    if (!isTodayCompleted()) resetPlanToPreview();
   });
   $('#partsModeSeg').addEventListener('click', e => {
     if (e.target.tagName !== 'BUTTON') return;
     $$('#partsModeSeg button').forEach(b => b.classList.toggle('active', b === e.target));
     planCfg.partsMode = e.target.dataset.v;
     renderPartsChips();
-    if (!isTodayCompleted()) { currentPlan = null; renderPlanPreview(); }
+    if (!isTodayCompleted()) resetPlanToPreview();
   });
   $('#genPlanBtn').addEventListener('click', () => {
     if (planCfg.partsMode === 'manual' && !planCfg.parts.length) { toast('请先选择训练部位，或切到 AI 推荐'); return; }
@@ -226,11 +266,9 @@
     const dur = computeDuration();
     const env = planCfg.env;
     const regions = currentRegions();
-    currentPlan = AI.generatePlan({ durationMin: dur, env, profile, completedDays: Store.countDays(), concernRegions: profile.concernAreas || [], regions });
-    currentPlan._meta = { durationMin: dur, env };
-    $('#planPreview').innerHTML = '';   // 提交后隐藏实时预览，展示已锁定计划
-    toast('已生成 ' + currentPlan.length + ' 个动作的今日计划');
-    renderPlanResult();
+    const plan = AI.generatePlan({ durationMin: dur, env, profile, completedDays: Store.countDays(), concernRegions: profile.concernAreas || [], regions });
+    commitPlan(plan, { durationMin: dur, env });
+    toast('已生成 ' + plan.length + ' 个动作的今日计划');
   });
 
   /* ================= 跟练计时器 ================= */
@@ -319,6 +357,7 @@
   $('#woSkip').addEventListener('click', () => { if (wo) advance(); });
   function finishWorkout() {
     stopTimer();
+    Store.clearDraft(Store.todayStr());   // 已打卡，清掉未完成的草稿
     const meta = wo.meta;
     const profile = Store.getProfile() || {};
     const calories = AI.estimateCalories(meta.durationMin, profile, meta.env);
