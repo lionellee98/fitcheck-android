@@ -81,11 +81,11 @@ const AI = (function () {
     const m = (s || '').split(/[。.!?！？]/)[0];
     return m ? m.trim() : '';
   }
-  function makeItem(ex, sets, reps, env, secs, kind) {
+  function makeItem(ex, sets, reps, env, secs, kind, restSecs) {
     const intensity = intensityOf(ex);
     return { id: ex.id, name: ex.name, zh: ex.zh, gif: ex.gif, region: ex.region,
       equipment: ex.equipment, sets, reps, secs, kind,
-      intensity, restSecs: restFor(intensity), core: firstSentence(ex.desc) };
+      intensity, restSecs: (restSecs != null ? restSecs : restFor(intensity)), core: firstSentence(ex.desc) };
   }
 
   function generatePlan(opts) {
@@ -93,48 +93,109 @@ const AI = (function () {
     // 自选部位优先；否则由 AI 根据打卡进度与身体重点智能搭配
     const regions = (explicit && explicit.length) ? explicit : pickSplit(completedDays || 0, concernRegions);
     const scheme = repsScheme(profile && profile.goal);
-    const dur = Math.max(10, durationMin || 30);
+    const B = Math.max(10, durationMin || 30) * 60;   // 总预算（秒）—— 所有动作(含热身/放松/组间休息)之和必须等于它
 
-    let plan = [];
+    // 热身 / 放松按总时长比例分配；运动时间短则相应缩短
+    let warmup = Math.round(B * 0.08);
+    let cooldown = Math.round(B * 0.07);
 
-    // 热身：居家/户外优先徒手有氧，健身房可用任意有氧器械；时长为固定连续块（约 2~4 分钟）
+    // 主训练动作数量随总时长自适应：短时长自动减少动作数
+    const pools = regions.map(rg => shuffle(byRegion(rg).filter(e => equipmentAllowed(e.equipment, env))));
+    const avail = pools.reduce((s, p) => s + p.length, 0);
+    let n;
+    if (B >= 40 * 60) n = 5;
+    else if (B >= 25 * 60) n = 3;
+    else n = 2;
+    n = Math.max(1, Math.min(n, avail, 6));
+
+    // 收集主训练动作（轮询交替，保证覆盖所选部位）
+    let mains = [];
+    let added = true;
+    while (added && mains.length < n) {
+      added = false;
+      for (const pool of pools) {
+        if (pool.length && mains.length < n) { mains.push(pool.shift()); added = true; }
+      }
+    }
     const wu = (env === 'gym'
       ? DATA.find(e => e.region === '有氧')
       : DATA.find(e => e.region === '有氧' && e.equipment === 'body weight'))
       || DATA.find(e => e.equipment === 'body weight');
-    const warmupSecs = Math.max(120, Math.min(240, Math.round(dur * 0.08 * 60)));
-    if (wu) plan.push(makeItem(wu, 1, '动态热身', env, warmupSecs, 'warmup'));
-
-    // 主训练：跨所选部位收集候选动作，目标约 3 个（多部位时最多 5 个），
-    // 轮询交替取，保证每个选中的部位都能覆盖到；总动作数 = 热身 + 主训练 + 放松 ≈ 5 个
-    const pools = regions.map(rg => shuffle(byRegion(rg).filter(e => equipmentAllowed(e.equipment, env))));
-    let mains = [];
-    const target = regions.length > 1 ? Math.min(5, pools.reduce((s, p) => s + p.length, 0)) : Math.min(3, pools.reduce((s, p) => s + p.length, 0));
-    let added = true;
-    while (added && mains.length < target) {
-      added = false;
-      for (const pool of pools) {
-        if (pool.length && mains.length < target) { mains.push(pool.shift()); added = true; }
-      }
-    }
     if (wu) mains = mains.filter(m => m.id !== wu.id);
-    // 每个动作的组时长 = 单次动作耗时(perRep) × 次数(repsToNum)，例如引体向上 10 个 ≈ 30 秒/组
-    mains.forEach(ex => {
-      const its = intensityOf(ex);
-      const rn = repsToNum(scheme.reps) || 10;
-      const secs = Math.max(20, perRep(its) * rn);
-      plan.push(makeItem(ex, scheme.sets, scheme.reps, env, secs, 'main'));
-    });
 
+    // 每个动作：单次耗时 = 单次动作耗时(perRep) × 次数(repsToNum)；按预算反推组数
+    const rn = repsToNum(scheme.reps) || 10;
+    let mainItems = [];
+    let sumMains = 0;
+    // 热身/放松限制在合理区间（仍随总时长比例，但单块不过长）；残差由主训练吸收
+    warmup = Math.max(30, Math.min(300, Math.round(B * 0.08)));
+    cooldown = Math.max(20, Math.min(240, Math.round(B * 0.07)));
+    if (mains.length) {
+      let mainBudget = B - warmup - cooldown;
+      if (mainBudget < mains.length * 40) {            // 预算过紧，压缩到下限再试
+        warmup = 30; cooldown = 20; mainBudget = B - warmup - cooldown;
+      }
+      const share = mainBudget / mains.length;
+      mains.forEach(ex => {
+        const its = intensityOf(ex);
+        const setSecs = perRep(its) * rn;              // 每组实际工作秒数
+        const rest = restFor(its);                     // 组间休息（与计时器保持一致）
+        let sets = Math.round((share + rest) / (setSecs + rest));
+        sets = Math.max(1, Math.min(8, sets));
+        sumMains += sets * setSecs + (sets - 1) * rest;
+        mainItems.push(makeItem(ex, sets, scheme.reps, env, setSecs, 'main', rest));
+      });
+      // 精确保修：把主训练取整后的残差吸收进最后一个动作（先调组数，再按组数均摊微调单组秒数），
+      // 热身/放松保持合理区间，整体 热身+主训练+放松 之和严格等于所选时长
+      let diff = mainBudget - sumMains;
+      if (diff !== 0 && mainItems.length) {
+        const last = mainItems[mainItems.length - 1];
+        const unit = last.secs + last.restSecs;
+        last.sets = Math.max(1, Math.min(8, last.sets + Math.round(diff / unit)));
+        sumMains = mainItems.reduce((s, it) => s + it.sets * it.secs + (it.sets - 1) * it.restSecs, 0);
+        let diff2 = mainBudget - sumMains;
+        if (diff2 !== 0) {
+          last.secs = Math.max(10, last.secs + Math.round(diff2 / last.sets));
+          sumMains = mainItems.reduce((s, it) => s + it.sets * it.secs + (it.sets - 1) * it.restSecs, 0);
+        }
+      }
+      // 最终精确保修：把取整残差精确吸收进最后一个动作（反解其单组秒数），仍差极小则进热身
+      let finalDiff = B - (warmup + cooldown + sumMains);
+      if (finalDiff !== 0 && mainItems.length) {
+        const last = mainItems[mainItems.length - 1];
+        // last 应有的总时长 = 当前 last 总时长 + finalDiff
+        const lastCur = last.sets * last.secs + (last.sets - 1) * last.restSecs;
+        const targetLast = lastCur + finalDiff;
+        // 反解整数单组秒数，使 last 总时长尽量贴近 targetLast
+        let newSecs = Math.max(10, Math.round((targetLast - (last.sets - 1) * last.restSecs) / last.sets));
+        last.secs = newSecs;
+        sumMains = mainItems.reduce((s, it) => s + it.sets * it.secs + (it.sets - 1) * it.restSecs, 0);
+        // 若仍有 ±1~2 秒取整残差，依次吸进热身 / 放松（保证严格精确）
+        const f2 = B - (warmup + cooldown + sumMains);
+        if (f2 !== 0) {
+          const w = warmup + f2;
+          if (w >= 30 && w <= 300) warmup = w;
+          else { const c = cooldown + f2; if (c >= 20 && c <= 240) cooldown = c; }
+        }
+      }
+    } else {
+      // 无主训练动作（极端情况）：热身/放松按比例瓜分全部时长
+      warmup = Math.max(60, Math.round(B * 0.5));
+      cooldown = B - warmup;
+    }
+
+    const plan = [];
+    if (wu) plan.push(makeItem(wu, 1, '动态热身', env, warmup, 'warmup', 0));
+    plan.push(...mainItems);
     // 放松：优先拉伸本次训练的部位（徒手），让"选什么部位就见什么部位"，否则退化为通用徒手拉伸
     let cd = null;
+    const inPlan = new Set(plan.map(p => p.id));
     if (regions && regions.length) {
-      const cdPool = DATA.filter(e => regions.includes(e.region) && e.equipment === 'body weight');
+      const cdPool = DATA.filter(e => regions.includes(e.region) && e.equipment === 'body weight' && !inPlan.has(e.id));
       if (cdPool.length) cd = cdPool[Math.floor(Math.random() * cdPool.length)];
     }
-    if (!cd) cd = DATA.find(e => e.region === '核心/腰腹' && e.equipment === 'body weight')
-      || DATA.find(e => e.equipment === 'body weight' && e.region !== '有氧');
-    if (cd && !plan.find(p => p.id === cd.id)) plan.push(makeItem(cd, 1, '拉伸放松', env, 120, 'cooldown'));
+    if (!cd) cd = DATA.find(e => e.equipment === 'body weight' && e.region !== '有氧' && !inPlan.has(e.id));
+    if (cd) plan.push(makeItem(cd, 1, '拉伸放松', env, cooldown, 'cooldown', 0));
 
     return plan;
   }

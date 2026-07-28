@@ -353,6 +353,7 @@
   function playClip(url, gap) {
     return new Promise(res => {
       const my = ttsToken;
+      if (ttsAudio) { try { ttsAudio.pause(); } catch (e) {} ttsAudio = null; } // 先停掉上一条仍在播放的音频，杜绝重叠
       const a = new Audio(url);
       a.preload = 'auto';
       ttsAudio = a;
@@ -373,7 +374,11 @@
   // 优先播内置语音包；语音包整包缺失（CI 生成失败）时才兜底系统 TTS
   function announce(ids, fallbackText) {
     if (!speechOn) return;
-    if (ttsManifest) { playClips(ids); return; }
+    if (ttsManifest) {
+      stopSpeech();          // 先停掉当前正在播放的语音（含上一条），避免与下一条重叠
+      playClips(ids);
+      return;
+    }
     // 兜底：系统语音（仅当内置包不可用时）
     if (!('speechSynthesis' in window) || !fallbackText) return;
     try {
@@ -505,7 +510,7 @@
   });
   function finishWorkout() {
     stopTimer();
-    stopSpeech();
+    // 注意：不调用 stopSpeech()，让刚 announce 的「最后一组完成，太棒了」鼓励语音播完再停
     Store.clearDraft(Store.todayStr());   // 已打卡，清掉未完成的草稿
     const meta = wo.meta;
     const profile = Store.getProfile() || {};
