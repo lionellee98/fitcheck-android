@@ -669,7 +669,10 @@
     $('#inpWeight').value = p.weight || '';
     $('#inpHeight').value = p.height || '';
     const v = document.querySelector('meta[name="app-version"]');
-    if (v && $('#appVersion')) $('#appVersion').textContent = '版本 v' + (v.content || '1.0');
+    const b = document.querySelector('meta[name="app-build"]');
+    let txt = '版本 v' + (v ? v.content : '1.0');
+    if (b && b.content) txt += ' · 构建于 ' + b.content;
+    if ($('#appVersion')) $('#appVersion').textContent = txt;
     renderBodyAnalysis();
     renderPhotos();
     renderConcern();
