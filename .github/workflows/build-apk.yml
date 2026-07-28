@@ -53,6 +53,13 @@ jobs:
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
 
+      - name: Generate offline Chinese TTS voice pack (no system TTS)
+        run: |
+          python3 -m pip install --quiet edge-tts
+          python3 .github/scripts/gen_tts.py
+        env:
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+
       - name: Install deps & sync Capacitor
         run: |
           npm ci || npm install

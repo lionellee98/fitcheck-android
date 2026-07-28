@@ -330,50 +330,65 @@
   let wo = null;
   function rand(a, b) { return Math.floor(a + Math.random() * (b - a + 1)); }
 
-  /* 语音播报（Web Speech API，本地合成、不上传服务器） */
-  let speechOn = true;
-  let ttsVoices = [];
-  let ttsReady = false;
-  function loadVoices() {
-    if (!('speechSynthesis' in window)) return;
-    try { ttsVoices = window.speechSynthesis.getVoices() || []; } catch (e) { ttsVoices = []; }
-    ttsReady = true;
+  /* 内置语音包（离线 mp3，不调用系统 TTS；仅在语音包缺失时兜底系统语音） */
+  let speechOn = true;            // #woSound 静音开关
+  let ttsManifest = null;         // { clipId: 'file.mp3', ... }
+  let ttsLoaded = false;
+  let ttsToken = 0;               // 每次 stopSpeech 自增，用于中断正在播放的队列
+  let ttsAudio = null;            // 当前正在播放的 Audio 元素
+  const TTS_BASE = 'vendor/tts/';
+
+  function loadTts() {
+    if (ttsLoaded) return Promise.resolve();
+    ttsLoaded = true;
+    return fetch(TTS_BASE + 'manifest.json')
+      .then(r => (r && r.ok ? r.json() : null))
+      .then(m => { ttsManifest = m && Object.keys(m).length ? m : null; })
+      .catch(() => { ttsManifest = null; });
   }
-  if ('speechSynthesis' in window) {
-    loadVoices();
-    window.speechSynthesis.onvoiceschanged = loadVoices;   // Android 上 voices 异步加载，需监听
+  function ttsUrl(id) {
+    if (!ttsManifest || !ttsManifest[id]) return null;
+    return TTS_BASE + ttsManifest[id];
   }
-  // 优先选中文语音；没有则回落到任意可用语音（避免静默）
-  function pickZhVoice() {
-    if (!ttsVoices.length) return null;
-    return ttsVoices.find(v => /^zh/i.test(v.lang)) ||
-           ttsVoices.find(v => /(chinese|中文|普通话|国语)/i.test(v.name)) || null;
+  function playClip(url, gap) {
+    return new Promise(res => {
+      const my = ttsToken;
+      const a = new Audio(url);
+      a.preload = 'auto';
+      ttsAudio = a;
+      const done = () => { if (ttsAudio === a) ttsAudio = null; if (my !== ttsToken) return res(); setTimeout(res, gap || 150); };
+      a.onended = done;
+      a.onerror = () => { if (ttsAudio === a) ttsAudio = null; res(); };
+      a.play().catch(() => { if (ttsAudio === a) ttsAudio = null; res(); });
+    });
   }
-  function speak(text) {
-    if (!speechOn || !('speechSynthesis' in window) || !text) return;
+  async function playClips(ids) {
+    const my = ttsToken;
+    for (const id of ids) {
+      if (my !== ttsToken) return;            // 已被 stopSpeech 中断
+      const u = ttsUrl(id);
+      if (u) await playClip(u);
+    }
+  }
+  // 优先播内置语音包；语音包整包缺失（CI 生成失败）时才兜底系统 TTS
+  function announce(ids, fallbackText) {
+    if (!speechOn) return;
+    if (ttsManifest) { playClips(ids); return; }
+    // 兜底：系统语音（仅当内置包不可用时）
+    if (!('speechSynthesis' in window) || !fallbackText) return;
     try {
-      const u = new SpeechSynthesisUtterance(text);
-      const v = pickZhVoice();
-      if (v) { u.voice = v; u.lang = v.lang; } else { u.lang = 'zh-CN'; }
-      u.rate = 1.0; u.pitch = 1.0; u.volume = 1.0;
-      // Android WebView 已知 chromium bug：cancel 与 speak 在同一同步调用栈内会直接丢弃本次播报，
-      // 必须错开一个 macrotask（setTimeout）才能稳定发声。
       window.speechSynthesis.cancel();
       setTimeout(() => {
         if (!speechOn || !('speechSynthesis' in window)) return;
-        try { window.speechSynthesis.speak(u); } catch (e) {}
+        try { const u = new SpeechSynthesisUtterance(fallbackText); u.lang = 'zh-CN'; u.volume = 1; window.speechSynthesis.speak(u); } catch (e) {}
       }, 60);
-    } catch (e) { /* 部分 WebView 不支持语音，忽略即可 */ }
+    } catch (e) {}
   }
-  // 开场自检：若设备没有中文语音包，明确提示用户（否则会静默无声音，让人误以为 App 坏了）
-  function warnIfNoTts() {
-    if (!('speechSynthesis' in window)) { toast('当前环境不支持语音播报'); return; }
-    setTimeout(() => {
-      if (ttsReady && ttsVoices.length && !pickZhVoice())
-        toast('未检测到中文语音包，请安装「Google 文字转语音」并下载中文(普通话)');
-    }, 300);
+  function stopSpeech() {
+    ttsToken++;                              // 让进行中的 playClips 队列立即退出
+    if (ttsAudio) { try { ttsAudio.pause(); } catch (e) {} ttsAudio = null; }
+    try { if ('speechSynthesis' in window) window.speechSynthesis.cancel(); } catch (e) {}
   }
-  function stopSpeech() { try { if ('speechSynthesis' in window) window.speechSynthesis.cancel(); } catch (e) {} }
 
   const COACH = {
     warmup: '活动关节、升高体温，让身体进入训练状态，呼吸均匀。',
@@ -391,7 +406,7 @@
     wo = { i: 0, j: 1, phase: 'work', remaining: plan[0].secs, total: plan[0].secs,
       running: false, timer: null, plan, meta: plan._meta || { durationMin: 30, env: 'gym' } };
     openModal('workoutModal');
-    warnIfNoTts();
+    loadTts();                        // 确保内置语音包 manifest 已就绪
     setPhase('work', plan[0].secs);   // 进入第一组，由 setPhase 统一播报（含开场提示），避免重复触发被吞
   }
   function startTimer() {
@@ -407,15 +422,19 @@
     if (phase === 'work') {
       const it = curItem();
       const isLastSet = (wo.i === wo.plan.length - 1 && wo.j === it.sets);
-      if (it.kind === 'warmup') speak('热身开始，活动开关节。');
-      else if (it.kind === 'cooldown') speak('拉伸放松开始，慢慢来。');
+      const ids = [];
+      let fb = '';
+      if (it.kind === 'warmup') { ids.push('warmup_start'); fb = '热身开始，活动开关节。'; }
+      else if (it.kind === 'cooldown') { ids.push('cooldown_start'); fb = '拉伸放松开始，慢慢来。'; }
       else {
-        const lead = (wo.i === 0 && wo.j === 1) ? '训练开始，准备好了吗？'
-                   : isLastSet ? '最后一组，' : '';
-        speak(lead + '第 ' + wo.j + ' 组，开始。' + (it.core ? it.core : ''));
+        if (wo.i === 0 && wo.j === 1) ids.push('train_start');
+        ids.push('set_start_' + wo.j);
+        if (it.id) ids.push('cue_' + it.id);
+        fb = (wo.i === 0 && wo.j === 1 ? '训练开始，' : isLastSet ? '最后一组，' : '') + '第 ' + wo.j + ' 组，开始。' + (it.core || '');
       }
+      announce(ids, fb);
     } else if (phase === 'rest') {
-      speak('休息 ' + secs + ' 秒，调整呼吸，准备下一组。');
+      announce(['rest_' + secs], '休息 ' + secs + ' 秒，调整呼吸，准备下一组。');
     }
     updateWorkoutUI();
   }
@@ -430,7 +449,7 @@
       if (wo.j < item.sets) { wo.j++; setPhase('rest', restSecondsFor(item)); }
       else {
         const isLast = (wo.i === wo.plan.length - 1);
-        if (isLast) speak('最后一组完成，太棒了！坚持就是胜利！');
+        if (isLast) announce(['finish_encourage'], '最后一组完成，太棒了！坚持就是胜利！');
         wo.i++;
         if (wo.i >= wo.plan.length) { finishWorkout(); return; }
         wo.j = 1; setPhase('work', curItem().secs);
@@ -441,7 +460,7 @@
   }
   function woTick() {
     wo.remaining--;
-    if (wo.phase === 'rest' && wo.remaining > 0 && wo.remaining <= 3) speak(String(wo.remaining));
+    if (wo.phase === 'rest' && wo.remaining > 0 && wo.remaining <= 3) announce(['count_' + wo.remaining], String(wo.remaining));
     if (wo.remaining <= 0) advance();
     else updateWorkoutUI();
   }
